@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+"""osken-manager - run one or more os-ken applications (an OpenFlow controller).
+
+os-ken 4.x no longer ships the osken-manager command, so the lab provides this one.
+
+  osken-manager controller/cgr_switch.py            # listen for switches on port 6653
+  osken-manager --port 6633 --verbose my_app.py
+  osken-manager --observe-links my_app.py           # also run LLDP topology discovery
+"""
+import argparse
+import logging
+import os
+import socket
+import sys
+
+from os_ken.lib import hub
+
+hub.patch(thread=False)
+
+from os_ken import cfg  # noqa: E402
+from os_ken.base.app_manager import AppManager  # noqa: E402  (registers the OpenFlow options)
+
+
+def port_in_use(port):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            s.bind(("0.0.0.0", port))
+            return False
+        except OSError:
+            return True
+
+
+def main():
+    p = argparse.ArgumentParser(
+        prog="osken-manager",
+        description="Run os-ken applications (files or module names) as an OpenFlow controller.")
+    p.add_argument("apps", nargs="+", help="application file(s), e.g. controller/cgr_switch.py")
+    p.add_argument("--port", type=int, default=6653, help="OpenFlow listening port (default 6653)")
+    p.add_argument("--observe-links", action="store_true",
+                   help="discover switch-to-switch links with LLDP (os_ken.topology)")
+    p.add_argument("--verbose", action="store_true", help="debug logging")
+    a = p.parse_args()
+
+    logging.basicConfig(level=logging.DEBUG if a.verbose else logging.INFO,
+                        format="%(asctime)s %(levelname)-5s %(name)s: %(message)s",
+                        datefmt="%H:%M:%S")
+    log = logging.getLogger("osken-manager")
+    if port_in_use(a.port):
+        log.error("port %d is already in use - is another controller running? "
+                  "Stop it (Ctrl-C in its terminal, or: pkill -f osken-manager) and try again.", a.port)
+        return 1
+    cfg.CONF(args=[], project="os_ken")
+    cfg.CONF.set_override("ofp_tcp_listen_port", a.port)
+    apps = list(a.apps)
+    if a.observe_links:
+        cfg.CONF.set_override("observe_links", True)
+        apps.append("os_ken.topology.switches")
+    apps.append("os_ken.controller.ofp_handler")
+    log.info("loading %s; listening for OpenFlow switches on port %d (Ctrl-C to stop)",
+             ", ".join(a.apps), a.port)
+    mgr = AppManager.get_instance()
+    mgr.load_apps(apps)
+    services = mgr.instantiate_apps(**mgr.create_contexts())
+    try:
+        hub.joinall(services)
+    except KeyboardInterrupt:
+        log.info("stopped")
+    finally:
+        try:
+            mgr.close()
+        except Exception:  # noqa: BLE001
+            pass
+        logging.shutdown()
+        os._exit(0)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

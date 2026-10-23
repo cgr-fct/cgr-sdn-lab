@@ -1,0 +1,23 @@
+#!/bin/bash
+# hsh <host> [command...] - open a shell (or run a command) inside a running Mininet host.
+#   hsh            list the hosts of the running network
+#   hsh h1         interactive shell on h1 (exit with Ctrl-D)
+#   hsh h1 tcpdump -n -i h1-eth0
+list_hosts() { pgrep -a -f '^bash .*mininet:' | sed -n 's/.* mininet:\(.*\)$/\1/p' | sort -V | tr '\n' ' '; echo; }
+
+if [ $# -eq 0 ]; then
+  echo -n "Running Mininet nodes: "; list_hosts
+  echo "Usage: hsh <host> [command...]"
+  exit 0
+fi
+h=$1; shift
+pid=$(pgrep -f "mininet:${h}\$" | head -1)
+if [ -z "$pid" ]; then
+  echo "No running Mininet node called '$h'. Is cgr-net running? Nodes: $(list_hosts)" >&2
+  exit 1
+fi
+if [ $# -eq 0 ]; then
+  exec mnexec -a "$pid" env PS1="${h}# " bash --norc
+else
+  exec mnexec -a "$pid" "$@"
+fi

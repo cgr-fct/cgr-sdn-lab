@@ -1,0 +1,19 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Run controller",
+      "type": "shell",
+      "command": "osken-manager controller/cgr_switch.py",
+      "problemMatcher": [],
+      "presentation": { "panel": "dedicated" }
+    },
+    {
+      "label": "Start network (tree,2)",
+      "type": "shell",
+      "command": "cgr-net --topo tree,2",
+      "problemMatcher": [],
+      "presentation": { "panel": "dedicated" }
+    }
+  ]
+}

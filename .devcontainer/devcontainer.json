@@ -1,0 +1,20 @@
+{
+  // CGR SDN lab: os-ken controller + Mininet/Open vSwitch in one container.
+  // The image is prebuilt for amd64 (Intel/AMD) and arm64 (Apple Silicon).
+  "name": "CGR SDN lab (os-ken + Mininet)",
+  "image": "ghcr.io/cgr-fct/cgr-sdn:latest",
+  // To build the image on your own computer instead (slower), replace the "image" line with:
+  //   "build": { "dockerfile": "../image/Dockerfile", "context": ".." },
+  "runArgs": ["--privileged", "--hostname", "cgr-sdn"],
+  "remoteUser": "root",
+  "postStartCommand": "start-ovs",
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-python.python", "ms-python.debugpy", "redhat.vscode-yaml"],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "python.defaultInterpreterPath": "/usr/bin/python3"
+      }
+    }
+  }
+}

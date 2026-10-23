@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+"""cgr-net - start a Mininet network of OpenFlow 1.3 switches for the CGR SDN lab.
+
+The switches are Open vSwitch bridges in userspace mode (no kernel module needed, so it
+works the same under Docker Desktop and Docker on Linux). They connect to the controller at
+127.0.0.1:6653 (start osken-manager first, in another terminal).
+
+  cgr-net                              tree of depth 2: 3 switches, 4 hosts (default)
+  cgr-net --topo linear,4              4 switches in a line, one host each
+  cgr-net --topo tree,3,2              depth 3, fanout 2
+  cgr-net --topo single,5              one switch, 5 hosts
+  cgr-net --custom topologies/example.py --topo campus
+  cgr-net --test pingall               build, ping all pairs, stop (no CLI)
+  cgr-net --clean                      remove what a crashed run left behind
+
+Hosts are h1, h2, ... with IP 10.0.0.N and MAC 00:00:00:00:00:0N. Inside the Mininet CLI:
+  h1 ping -c3 h4      pingall      h4 iperf3 -s &      h1 iperf3 -c h4 -t 5
+  sh ovs-ofctl -O OpenFlow13 dump-flows s1        links      net      exit
+From another terminal: hsh h1  (a shell on h1).
+"""
+import argparse
+import os
+import socket
+import subprocess
+import sys
+from functools import partial
+
+from mininet.clean import cleanup
+from mininet.cli import CLI
+from mininet.log import setLogLevel, info, warn
+from mininet.net import Mininet
+from mininet.node import OVSSwitch, RemoteController
+from mininet.topo import LinearTopo, MinimalTopo, SingleSwitchTopo, SingleSwitchReversedTopo
+from mininet.topolib import TreeTopo, TorusTopo
+from mininet.util import buildTopo
+
+TOPOS = {"minimal": MinimalTopo, "linear": LinearTopo, "reversed": SingleSwitchReversedTopo,
+         "single": SingleSwitchTopo, "tree": TreeTopo, "torus": TorusTopo}
+
+
+def load_custom(path):
+    """Read a topology file in Mininet's --custom format: it must define a dict `topos`."""
+    if not os.path.isfile(path):
+        sys.exit("cgr-net: custom topology file not found: %s" % path)
+    ns = {}
+    exec(compile(open(path).read(), path, "exec"), ns, ns)  # noqa: S102 (lab tool)
+    if "topos" not in ns:
+        sys.exit("cgr-net: %s does not define a dict called 'topos'" % path)
+    TOPOS.update(ns["topos"])
+
+
+def controller_listening(ip, port):
+    try:
+        with socket.create_connection((ip, port), timeout=1):
+            return True
+    except OSError:
+        return False
+
+
+def ensure_ovs():
+    if subprocess.call(["ovs-vsctl", "--timeout=2", "show"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) != 0:
+        subprocess.call(["start-ovs"])
+
+
+def main():
+    p = argparse.ArgumentParser(prog="cgr-net", description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--topo", default="tree,2", help="topology, e.g. tree,2 | linear,4 | single,3")
+    p.add_argument("--custom", action="append", default=[], metavar="FILE",
+                   help="Python file that defines topos = {'name': TopoClass}")
+    p.add_argument("--controller", default="127.0.0.1:6653", metavar="IP:PORT")
+    p.add_argument("--protocol", default="OpenFlow13", help="OpenFlow version (default OpenFlow13)")
+    p.add_argument("--test", choices=["pingall", "none"], default="none",
+                   help="pingall: build, test and stop without the CLI")
+    p.add_argument("--clean", action="store_true", help="clean up a previous run and exit")
+    p.add_argument("--verbose", action="store_true")
+    a = p.parse_args()
+
+    if os.geteuid() != 0:
+        sys.exit("cgr-net must run as root (the dev container terminal is root; otherwise use sudo).")
+    setLogLevel("debug" if a.verbose else "info")
+    ensure_ovs()
+    if a.clean:
+        cleanup()
+        ensure_ovs()
+        return 0
+
+    for f in a.custom:
+        load_custom(f)
+    try:
+        topo = buildTopo(TOPOS, a.topo)
+    except Exception as e:  # noqa: BLE001
+        sys.exit("cgr-net: bad --topo '%s' (%s). Known: %s" % (a.topo, e, ", ".join(sorted(TOPOS))))
+
+    ip, _, port = a.controller.partition(":")
+    port = int(port or 6653)
+    if not controller_listening(ip, port):
+        warn("*** No controller is listening on %s:%d yet - start it with\n"
+             "***     osken-manager controller/cgr_switch.py\n"
+             "*** The switches will connect as soon as it is running.\n" % (ip, port))
+
+    switch = partial(OVSSwitch, datapath="user", protocols=a.protocol)
+    net = Mininet(topo=topo, switch=switch, controller=None, autoSetMacs=True,
+                  autoStaticArp=False, waitConnected=False)
+    net.addController("c0", controller=RemoteController, ip=ip, port=port)
+    try:
+        net.start()
+        # Userspace switches + veth pairs: turn checksum offload off, or TCP breaks.
+        for h in net.hosts:
+            for intf in h.intfList():
+                if intf.name != "lo":
+                    h.cmd("ethtool -K %s tx off rx off >/dev/null 2>&1" % intf.name)
+        info("*** Waiting for the switches to connect to the controller\n")
+        if not net.waitConnected(timeout=15):
+            warn("*** Not all switches are connected to the controller (yet).\n")
+        if a.test == "pingall":
+            loss = net.pingAll()
+            return 0 if loss == 0 else 1
+        info("*** Hosts: %s   (open a host shell from another terminal: hsh h1)\n"
+             % " ".join("%s=%s" % (h.name, h.IP()) for h in net.hosts))
+        CLI(net)
+    finally:
+        net.stop()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

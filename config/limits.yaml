@@ -1,0 +1,14 @@
+# Configuration of the CGR switch application (read when the controller starts).
+
+# Seconds without traffic after which a flow entry expires; for a limited host this is also
+# how long a destination stays "in use" after the last packet to it.
+idle_timeout: 10
+
+# CSV file where the controller writes one line per finished TCP connection.
+tcp_stats_file: tcp_stats.csv
+
+# Hosts with a connection limit: IPv4 address -> maximum number of destinations the host may
+# communicate with at the same time. Hosts that are not listed have no limit.
+limited_hosts:
+  10.0.0.1: 2
+  10.0.0.3: 1

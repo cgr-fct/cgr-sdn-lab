@@ -1,0 +1,56 @@
+# Builds the lab container for amd64 + arm64 and pushes it to GitHub Container Registry:
+#   ghcr.io/<owner>/cgr-sdn:latest
+# After the first run make the package PUBLIC (GitHub > organisation > Packages > cgr-sdn >
+# Package settings > Change visibility), otherwise the students' VS Code cannot pull it.
+name: build-sdn-image
+
+on:
+  push:
+    branches: [main]
+    paths: ["image/**", ".github/workflows/image.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Lower-case owner
+        run: echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: image/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ env.OWNER }}/cgr-sdn:latest
+            ghcr.io/${{ env.OWNER }}/cgr-sdn:${{ github.run_number }}
+          cache-from: type=gha,scope=cgr-sdn
+          cache-to: type=gha,mode=max,scope=cgr-sdn
+
+  smoke-test:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lower-case owner
+        run: echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+      - name: Starting app (hub) + Mininet pingall
+        run: |
+          docker run --rm --privileged -v "$PWD:/workspaces/cgr-sdn-lab" -w /workspaces/cgr-sdn-lab \
+            ghcr.io/$OWNER/cgr-sdn:latest bash -c '
+              start-ovs &&
+              (osken-manager controller/cgr_switch.py > /tmp/ctl.log 2>&1 &) && sleep 4 &&
+              cgr-net --topo tree,2 --test pingall; rc=$?; tail -5 /tmp/ctl.log; exit $rc'

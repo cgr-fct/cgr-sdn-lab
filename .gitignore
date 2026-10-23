@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+tcp_stats.csv
+*.log
+.DS_Store
