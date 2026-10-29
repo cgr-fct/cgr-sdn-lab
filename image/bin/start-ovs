@@ -1,15 +1,33 @@
 #!/bin/bash
 # Start Open vSwitch inside the container (run automatically when the dev container starts).
-if ovs-vsctl --timeout=2 show >/dev/null 2>&1; then
+# The switches use the userspace datapath, so the openvswitch kernel module is NOT needed.
+# ovs-ctl insists on loading that module before it starts ovs-vswitchd, and Docker Desktop's
+# kernel does not have it: so ovs-ctl only starts the database here, and ovs-vswitchd is
+# started directly.
+RUN=/var/run/openvswitch LOG=/var/log/openvswitch
+vswitchd_ok() { ovs-appctl -t ovs-vswitchd version >/dev/null 2>&1; }
+
+if vswitchd_ok && ovs-vsctl --timeout=2 show >/dev/null 2>&1; then
   echo "Open vSwitch is already running."
   exit 0
 fi
-/usr/share/openvswitch/scripts/ovs-ctl start --system-id=random >/tmp/ovs-start.log 2>&1
-if ovs-vsctl --timeout=5 show >/dev/null 2>&1; then
+mkdir -p "$RUN" "$LOG"
+/usr/share/openvswitch/scripts/ovs-ctl --no-ovs-vswitchd start --system-id=random >/tmp/ovs-start.log 2>&1
+ovs-vsctl --timeout=2 show >/dev/null 2>&1 || \
+  /usr/share/openvswitch/scripts/ovs-ctl start --system-id=random >>/tmp/ovs-start.log 2>&1
+if ! vswitchd_ok; then
+  rm -f "$RUN/ovs-vswitchd.pid"
+  ovs-vswitchd "unix:$RUN/db.sock" -vconsole:emer -vsyslog:err -vfile:info --mlockall --no-chdir \
+    --log-file="$LOG/ovs-vswitchd.log" --pidfile="$RUN/ovs-vswitchd.pid" --detach --monitor \
+    >>/tmp/ovs-start.log 2>&1
+fi
+for i in 1 2 3 4 5; do vswitchd_ok && break; sleep 1; done
+if vswitchd_ok && ovs-vsctl --timeout=5 show >/dev/null 2>&1; then
   echo "Open vSwitch started ($(ovs-vswitchd --version | head -1))."
 else
   echo "ERROR: Open vSwitch did not start. Log:" >&2
   cat /tmp/ovs-start.log >&2
+  tail -5 "$LOG/ovs-vswitchd.log" >&2 2>/dev/null
   echo "Is the container running with --privileged? (see docs/troubleshooting.md)" >&2
   exit 1
 fi

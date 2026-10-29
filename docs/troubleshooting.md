@@ -11,6 +11,11 @@ the `"image": …` line by
 `"build": { "dockerfile": "../image/Dockerfile", "context": ".." },`
 and run F1 → *Dev Containers: Rebuild Container*.
 
+**`cgr-net` hangs at `*** Starting 3 switches`.** The switch daemon `ovs-vswitchd` is not
+running (only the database is: `pgrep -a ovs`). Press Ctrl-C, run `cgr-net --clean`, then
+`start-ovs`, and start `cgr-net` again. (The lab's switches run in userspace, so the
+"Module openvswitch not found" message of the standard OVS start script is harmless.)
+
 **`Open vSwitch did not start` / `ovs-vsctl: unix:/var/run/openvswitch/db.sock: database
 connection failed`.**
 Run `start-ovs` in a container terminal. If it still fails, the container is not running
